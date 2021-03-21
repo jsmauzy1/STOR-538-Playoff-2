@@ -1,0 +1,85 @@
+---
+title: "Playoffs 2"
+author: "Antonio Pano Flores"
+date: "3/21/2021"
+output: html_document
+---
+
+The primary goal of this project is to design models for prediction of three variables – Spread, Total, and OREB. Below you can find clear definitions of these three outcome variables. It is imperative that you follow these specifications. Your group will be making predictions of the three variables for all NBA games between April 10 and April 30, inclusively. Your predictions should be saved in the dataset called Predictions. Here you will find missing values where future predictions will be placed. This completed file should be submitted along with a paper summarizing your methodology. You will not only be graded by your methodology, but also by your predictive accuracy. The variables, Spread, Total, and OREB will all be evaluated by root mean squared error (RMSE). For each of the variables, the top 6 groups will get 3 points, the middle 6 groups will get 2 points, the bottom 5 groups will get 1 point. All three variables are numeric. If you don’t submit numeric predictions, you will get 0 points.
+
+Spread=Home Points−Away Points
+Total=Home Points+Away Points
+OREB=Home OREB+Away OREB
+
+Games = important information about every game in the NBA since 2004. I would advise only using a subset of the data from recent years.
+Games_Details = contains player level data for the games.
+Teams = links TEAM_ID to each team’s NICKNAME and CITY.
+
+The data you are given involves basic box score information. Because of this, you are required to engineer new variables and use outside data. This is highly recommended to gain a competitive edge in the sports betting market. For the engineering of new variables, consider creating differences and ratios between the stats for the home and away teams. Also, it may be useful to create variables that represent past information such as moving averages or lagged variables. These are just two basic examples. For the use of outside data, explore research for what other variables could be important for predicting these three variables. If you take the time to get data from games in the 2021, this data will be considered outside data.
+
+
+```{r}
+#Install and Load RCurl Package
+library(curl)
+library(tidyverse)
+```
+
+```{r}
+#Read Data Directly from Github
+GAMES=read.csv(url("https://raw.githubusercontent.com/mattymo18/STOR-538-Project2-2021/master/Source-Data/games.csv"))
+GAMES_DETAILS=read.csv(url("http://raw.githubusercontent.com/mattymo18/STOR-538-Project2-2021/master/Source-Data/games_details.csv"))
+TEAMS=read.csv(url("https://raw.githubusercontent.com/mattymo18/STOR-538-Project2-2021/master/Source-Data/teams.csv"))
+```
+
+```{r}
+#Preview Datasets
+head(filter(GAMES,GAME_ID==12000047))
+head(filter(GAMES_DETAILS,GAME_ID==12000047))
+```
+
+```{r}
+#Simplify Games Data
+ONE_GAME=GAMES %>% filter(GAME_ID==12000047) %>% 
+            select(GAME_DATE_EST,GAME_ID,HOME_TEAM_ID,VISITOR_TEAM_ID,PTS_home,PTS_away) %>%
+            mutate(Spread=PTS_home-PTS_away,Total=PTS_home+PTS_away)
+head(ONE_GAME)
+```
+
+```{r}
+#Obtain Aggregated OREB from Player Level Statistics
+OREB = GAMES_DETAILS %>%
+          select (TEAM_ABBREVIATION,GAME_ID,TEAM_ID,OREB) %>%
+          group_by(TEAM_ABBREVIATION,GAME_ID,TEAM_ID) %>%
+          summarize(OREB=sum(OREB,na.rm=T)) %>%
+          ungroup()
+head(filter(OREB,GAME_ID==12000047))
+```
+
+```{r}
+#Merging Offensive Rebounds Into Game Data
+ONE_GAME_DONE = left_join(ONE_GAME,select(OREB,-TEAM_ABBREVIATION),by=c("GAME_ID","HOME_TEAM_ID"="TEAM_ID")) %>%
+                    rename(OREB_home=OREB) %>%
+                    left_join(select(OREB,-TEAM_ABBREVIATION),by=c("GAME_ID","VISITOR_TEAM_ID"="TEAM_ID")) %>%
+                    rename(OREB_away=OREB) %>%
+                    mutate(OREB=OREB_home+OREB_away)
+head(ONE_GAME_DONE)
+```
+
+```{r}
+#Creating Home Team and Away Team Variables
+TWO_TEAMS=filter(TEAMS,TEAM_ID %in% c(1610612753,1610612766)) %>%
+            select(TEAM_ID,CITY,NICKNAME) %>%
+            unite(NAME,CITY,NICKNAME,sep=" ")
+head(TWO_TEAMS)
+```
+
+```{r}
+#Merging Team Name into original data
+ONE_GAME_DONE_AGAIN=left_join(ONE_GAME_DONE,TWO_TEAMS,by=c("HOME_TEAM_ID"="TEAM_ID")) %>%
+                        rename("Home Team"=NAME) %>%
+                        left_join(TWO_TEAMS,by=c("VISITOR_TEAM_ID"="TEAM_ID")) %>%
+                        rename("Away Team"=NAME) %>%
+                        select(GAME_DATE_EST,"Home Team","Away Team",everything()) %>%
+                        select(-GAME_ID,-HOME_TEAM_ID,-VISITOR_TEAM_ID)
+```
+
