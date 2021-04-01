@@ -1,7 +1,7 @@
 ---
 title: "Playoffs 2"
-author: "Antonio Pano Flores"
-date: "3/21/2021"
+author: "Team 9"
+date: "3/24/2021"
 output: html_document
 ---
 
@@ -29,57 +29,153 @@ library(tidyverse)
 GAMES=read.csv(url("https://raw.githubusercontent.com/mattymo18/STOR-538-Project2-2021/master/Source-Data/games.csv"))
 GAMES_DETAILS=read.csv(url("http://raw.githubusercontent.com/mattymo18/STOR-538-Project2-2021/master/Source-Data/games_details.csv"))
 TEAMS=read.csv(url("https://raw.githubusercontent.com/mattymo18/STOR-538-Project2-2021/master/Source-Data/teams.csv"))
+INJURIES=read.csv("injuries.csv")
 ```
 
 ```{r}
 #Preview Datasets
-head(filter(GAMES,GAME_ID==12000047))
-head(filter(GAMES_DETAILS,GAME_ID==12000047))
+head(GAMES)
+head(GAMES_DETAILS)
 ```
 
 ```{r}
 #Simplify Games Data
-ONE_GAME=GAMES %>% filter(GAME_ID==12000047) %>% 
-            select(GAME_DATE_EST,GAME_ID,HOME_TEAM_ID,VISITOR_TEAM_ID,PTS_home,PTS_away) %>%
-            mutate(Spread=PTS_home-PTS_away,Total=PTS_home+PTS_away)
-head(ONE_GAME)
+
+# total & spread: injuries, adjusted pm (whichever we import), home field advantage, chemistry scores???, pairwise four factors, previous game results
+# oreb: avg height of starting lineup, predicted total shots (or points), injuries, previous game results (avg by team, then break down my team matchup; etc.)
+
+# home field advantage + adjusted pm + chemistry scores for points and spread
+    #could also use four factors as a linear model, or do model selection on a bunch of predictors
+# player dependence for rebounds
+    # back out total shots from total points and fg%'s to find total shots (could be a helpful predictor of rebounds) (or use fga between all players in games_details)
+
+
+#my main concern is that our ideas so far could basically just predict a static metric for each team and then just add (total, oreb) or subtract (spread) based on opponent, with no real adjustment for matchups, etc.; could potentially create pairwise predictors that focus on features of the team rather than the games they were recorded for (e.g., player v player by position (pairwise average box stats) scaled by avg minutes played, pairwise simple rating from 82games)
+
+SIMPLE_GAMES=GAMES %>%
+    filter(between(SEASON,2010,2020)) %>%
+    select(GAME_DATE_EST,GAME_ID,HOME_TEAM_ID,VISITOR_TEAM_ID,PTS_home,PTS_away) %>% 
+    mutate(Spread=PTS_home-PTS_away,Total=PTS_home+PTS_away)
+head(SIMPLE_GAMES)
+
+# model selection --> cross validate --> next steps?
+# oreb: height, total shots, predicted points? (higher coring means faster paced means more oreb)
+# potentially use logistic to predict win or not, then use that to verify correctness of spread direction
 ```
 
 ```{r}
+# adjusted pm
+
+
+
+#Next Steps
+SIMPLE_GAMES_2=GAMES %>%
+    filter(between(SEASON,2010,2020)) %>%
+    select(GAME_DATE_EST,GAME_ID,HOME_TEAM_ID,VISITOR_TEAM_ID,PTS_home,PTS_away) %>% 
+    mutate(Spread=PTS_home-PTS_away,Total=PTS_home+PTS_away,Home_Advantage="2.33")
+head(SIMPLE_GAMES_2)
+
+FOURFACTORS=GAMES_DETAILS %>%
+    select(TEAM_ABBREVIATION,GAME_ID,TEAM_ID,FGM,FG3M,FGA,TO,OREB,FTM,DREB) %>%
+    group_by(TEAM_ABBREVIATION,GAME_ID,TEAM_ID) %>%
+    summarize(FGM=sum(FGM,na.rm=T),FG3M=sum(FG3M,na.rm=T),FGA=sum(FGA,na.rm=T),
+              TO=sum(TO,na.rm=T),
+              OREB=sum(OREB,na.rm=T),
+              FTM=sum(FTM,na.rm=T),
+              DREB=sum(DREB,na.rm=T),
+              .groups="drop") %>%
+    mutate(EFG=((FGM+0.5*FG3M)/FGA),TPP=(TO/92),ORP=(OREB/(FGA-FGM)),FTR=(FTM/FGA),OEFG=NA,DTPP=NA,DRP=NA,OFTR=NA) %>%
+    select(TEAM_ABBREVIATION,GAME_ID,TEAM_ID,EFG,TPP,ORP,FTR,OEFG,DTPP,DRP,OFTR)
+FOURFACTORS
+
+#need to merge similarly as done with oreb to get defensive four factors
+```
+
+
+```{r}
 #Obtain Aggregated OREB from Player Level Statistics
-OREB = GAMES_DETAILS %>%
-          select (TEAM_ABBREVIATION,GAME_ID,TEAM_ID,OREB) %>%
-          group_by(TEAM_ABBREVIATION,GAME_ID,TEAM_ID) %>%
-          summarize(OREB=sum(OREB,na.rm=T)) %>%
-          ungroup()
-head(filter(OREB,GAME_ID==12000047))
+OREB=GAMES_DETAILS %>%
+    select(TEAM_ABBREVIATION,GAME_ID,TEAM_ID,OREB) %>%
+    group_by(TEAM_ABBREVIATION,GAME_ID,TEAM_ID) %>%
+    summarize(OREB=sum(OREB,na.rm=T),.groups="drop")
+head(filter(OREB))
 ```
 
 ```{r}
 #Merging Offensive Rebounds Into Game Data
-ONE_GAME_DONE = left_join(ONE_GAME,select(OREB,-TEAM_ABBREVIATION),by=c("GAME_ID","HOME_TEAM_ID"="TEAM_ID")) %>%
-                    rename(OREB_home=OREB) %>%
-                    left_join(select(OREB,-TEAM_ABBREVIATION),by=c("GAME_ID","VISITOR_TEAM_ID"="TEAM_ID")) %>%
-                    rename(OREB_away=OREB) %>%
-                    mutate(OREB=OREB_home+OREB_away)
-head(ONE_GAME_DONE)
+SIMPLE_GAMES_OREB=left_join(SIMPLE_GAMES,select(OREB,-TEAM_ABBREVIATION),by=c("GAME_ID","HOME_TEAM_ID"="TEAM_ID")) %>%
+    rename(OREB_home=OREB) %>%
+    left_join(select(OREB,-TEAM_ABBREVIATION),by=c("GAME_ID","VISITOR_TEAM_ID"="TEAM_ID")) %>%
+    rename(OREB_away=OREB) %>%
+    mutate(OREB=OREB_home+OREB_away)
+head(SIMPLE_GAMES_OREB)
 ```
 
 ```{r}
 #Creating Home Team and Away Team Variables
-TWO_TEAMS=filter(TEAMS,TEAM_ID %in% c(1610612753,1610612766)) %>%
-            select(TEAM_ID,CITY,NICKNAME) %>%
-            unite(NAME,CITY,NICKNAME,sep=" ")
-head(TWO_TEAMS)
+ALL_TEAMS=TEAMS %>%
+    select(TEAM_ID,CITY,NICKNAME) %>%
+    unite(NAME,CITY,NICKNAME,sep=" ")
+head(ALL_TEAMS)
 ```
 
 ```{r}
 #Merging Team Name into original data
-ONE_GAME_DONE_AGAIN=left_join(ONE_GAME_DONE,TWO_TEAMS,by=c("HOME_TEAM_ID"="TEAM_ID")) %>%
-                        rename("Home Team"=NAME) %>%
-                        left_join(TWO_TEAMS,by=c("VISITOR_TEAM_ID"="TEAM_ID")) %>%
-                        rename("Away Team"=NAME) %>%
-                        select(GAME_DATE_EST,"Home Team","Away Team",everything()) %>%
-                        select(-GAME_ID,-HOME_TEAM_ID,-VISITOR_TEAM_ID)
+SIMPLE_GAMES_OREB_TEAM=left_join(SIMPLE_GAMES_OREB,ALL_TEAMS,by=c("HOME_TEAM_ID"="TEAM_ID")) %>%
+    rename("Home Team"=NAME) %>%
+    left_join(ALL_TEAMS,by=c("VISITOR_TEAM_ID"="TEAM_ID")) %>%
+    rename("Away Team"=NAME) %>%
+    select(GAME_DATE_EST,"Home Team","Away Team",everything()) %>%
+    select(-GAME_ID,-HOME_TEAM_ID,-VISITOR_TEAM_ID)
+head(SIMPLE_GAMES_OREB_TEAM)
+```
+
+```{r}
+#Making the Divisions Table
+NAME<-c("Boston Celtics", "Brooklyn Nets", "New York Knicks", "Philadelphia 76ers", "Toronto Raptors", "Chicago Bulls", "Cleveland Cavaliers", "Detroit Pistons", "Indiana Pacers", "Milwaukee Bucks", "Atlanta Hawks", "Charlotte Hornets", "Miami Heat", "Orlando Magic", "Washington Wizards", "Denver Nuggets", "Minnesota Timberwolves", "Oklahoma City Thunder", "Portland Trail Blazers", "Utah Jazz", "Golden State Warriors", "Los Angeles Clippers", "Los Angeles Lakers", "Phoenix Suns", "Sacramento Kings", "Dallas Mavericks", "Houston Rockets", "Memphis Grizzlies", "New Orleans Pelicans", "San Antonio Spurs")
+DIVISION<-c("Atlantic", "Atlantic", "Atlantic", "Atlantic", "Atlantic", "Central", "Central", "Central", "Central", "Central", "Southeast", "Southeast", "Southeast", "Southeast", "Southeast", "Northwest", "Northwest", "Northwest", "Northwest", "Northwest", "Pacific", "Pacific", "Pacific", "Pacific", "Pacific", "Southwest", "Southwest", "Southwest", "Southwest", "Southwest")
+DIVISIONS<-data.frame(NAME,DIVISION)
+```
+
+```{r}
+#Adding divisions to both TEAMS and SIMPLE_GAMES_OREB_TEAM
+# URL : https://www.nba.com/teams
+ALL_TEAMS_DIV=
+    left_join(ALL_TEAMS,DIVISIONS,by=c("NAME"))
+SIMPLE_GAMES_OREB_TEAM_DIV= 
+    left_join(SIMPLE_GAMES_OREB_TEAM,ALL_TEAMS_DIV,by=c("Home Team"="NAME")) %>%
+        rename("Home_Division"="DIVISION") %>%
+        left_join(ALL_TEAMS_DIV,by=c("Away Team"="NAME")) %>%
+        rename("Away_Division"="DIVISION") %>%
+        select(-TEAM_ID.x,-TEAM_ID.y) %>%
+        select(GAME_DATE_EST,`Home Team`,Home_Division,`Away Team`,Away_Division,everything())
+head(SIMPLE_GAMES_OREB_TEAM_DIV)
+```
+
+```{r}
+INJURIES
+```
+
+```{r}
+INJURIESBYGAME=INJURIES %>%
+    mutate(GAME_DATE_EST=format(strptime(as.character(Date),"%d/%m/%Y"),"%Y-%m-%d"),CA=ifelse(Acquired=="",0,1),CR=ifelse(Relinquished=="",0,1)) %>%
+    select(GAME_DATE_EST,Team,CA,CR) %>%
+    group_by(Team,GAME_DATE_EST) %>%
+    summarize(SA=sum(CA),SR=sum(CR),.groups="drop")
+INJURIESBYGAME
+
+#join SA and SR to main data by game and team combo, then calculate rolling total for each (by season)
+```
+
+
+```{r}
+PLAYERINFO=read.csv("all_seasons.csv")
+PLAYERINFO
+
+#join to player data, then average player height by team/year/etc., then join to main dataset
+```
+
+```{r}
+# still need apm or rpm data - I couldn't find it anywhere except on http://www.espn.com/nba/statistics/rpm but couldn;t figure out how to scrape it all from here
 ```
 
